@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#312e81">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>お見積りシミュレーター | くらしと仕事のITパートナー</title>
+  <meta name="description" content="長崎県を中心に活動する訪問ITサポートの料金シミュレーター">
+  
+  <!-- PWA用マニフェスト -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <style>
+    /* カスタムスタイル */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    /* スムーズなアニメーション */
+    .active\:scale-98:active {
+      transform: scale(0.98);
+    }
+    
+    /* スクロールバー非表示 */
+    ::-webkit-scrollbar {
+      display: none;
+    }
+    
+    /* タップハイライト無効化 */
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ============================================
+    // 価格データ（ここを編集すれば価格改定できます）
+    // ============================================
+    const PRICE_DATA = {
+      // 出張料金
+      travel: {
+        bands: [
+          { 
+            id: 'band_0_20', 
+            label: '基本エリア（〜20km）', 
+            sublabel: '長崎市・時津町・長与町・西海市', 
+            price: 4000,
+            revisit: 2000 
+          },
+          { 
+            id: 'band_30', 
+            label: '30km圏内', 
+            sublabel: '諫早市', 
+            price: 7000,
+            revisit: 3500 
+          },
+          { 
+            id: 'band_40_50', 
+            label: '40〜50km圏内', 
+            sublabel: '大村市・佐世保市・東彼杵・川棚・雲仙・嬉野・波佐見', 
+            price: 8000,
+            revisit: 4000 
+          },
+          { 
+            id: 'band_55_over', 
+            label: '遠方エリア（55km〜）', 
+            sublabel: '佐々町・島原市・南島原市・鹿島市', 
+            price: 10000,
+            revisit: 5000 
+          },
+        ],
+      },
+
+      // デバイスカテゴリ
+      devices: [
+        { id: 'PC', label: 'パソコン', icon: '💻' },
+        { id: 'SP', label: 'スマートフォン', icon: '📱' },
+        { id: 'NW', label: 'ネットワーク機器', icon: '🌐' },
+        { id: 'PR', label: '周辺機器', icon: '🖨️' },
+        { id: 'DATA', label: 'データ復旧', icon: '💾' },
+        { id: 'OTHER', label: '共通・その他', icon: '🔧' },
+      ],
+
+      // 作業メニュー
+      menu: {
+        // ========== Trouble（トラブル対応） ==========
+        trouble: {
+          PC: [
+            { id: 'T_PC_HW_CHECK', label: '動作チェック（必須）', sublabel: '原因診断', price: 6000, choiceGroup: 'PC_HW_CHECK', isSupported: true },
+            { id: 'T_PC_HW_PARTS', label: 'パーツ交換あり', sublabel: 'PCお預かり・再訪問', price: 10000, choiceGroup: 'PC_HW_PARTS', isSupported: true, note: 'パーツ費は別途', requiresRevisit: true },
+            { id: 'T_PC_HW_NO_PARTS', label: 'パーツ交換なしで復旧', sublabel: '成功報酬型', price: 8000, choiceGroup: 'PC_HW_PARTS', isSupported: true },
+            { id: 'T_PC_SW_CHECK', label: 'ソフトウェア診断', sublabel: '動作チェック', price: 6000, choiceGroup: 'PC_SW_CHECK', isSupported: true },
+            { id: 'T_PC_SW_NO_PARTS_WITH_CHECK', label: 'パーツ交換なし', sublabel: '動作チェック必要時', price: 8000, choiceGroup: 'PC_SW_BASE', isSupported: true },
+            { id: 'T_PC_SW_NO_CHECK', label: '動作チェック不要', sublabel: 'パーツ交換なし', price: 8000, choiceGroup: 'PC_SW_BASE', isSupported: true },
+          ],
+          SP: [
+            { id: 'T_SP_HW_UNSUPPORTED', label: 'ハードウェア修理', sublabel: 'スマホ本体', price: 0, choiceGroup: 'SP_HW', isSupported: false },
+            { id: 'T_SP_SW_APP_1', label: 'アプリ設定（1件）', sublabel: 'インストール・初期設定', price: 4000, choiceGroup: 'SP_APP_COUNT', isSupported: true },
+            { id: 'T_SP_SW_APP_2', label: 'アプリ設定（2件）', sublabel: 'インストール・初期設定', price: 8000, choiceGroup: 'SP_APP_COUNT', isSupported: true },
+            { id: 'T_SP_SW_APP_3', label: 'アプリ設定（3件）', sublabel: 'インストール・初期設定', price: 12000, choiceGroup: 'SP_APP_COUNT', isSupported: true },
+            { id: 'T_SP_SW_OS_INIT', label: 'OS初期化', sublabel: 'リセット・再設定', price: 8000, choiceGroup: 'SP_OS', isSupported: true },
+            { id: 'T_SP_SW_MIGRATE', label: 'データ移行', sublabel: 'アカウント・データ引継ぎ', price: 10000, choiceGroup: 'SP_MIGRATE', isSupported: true },
+          ],
+          NW: [
+            { id: 'T_NW_CHECK', label: '動作チェック', sublabel: 'ルーター診断', price: 6000, choiceGroup: 'NW_CHECK', isSupported: true },
+            { id: 'T_NW_HW_UNSUPPORTED', label: 'ハードウェア修理', sublabel: 'ルーター本体', price: 0, choiceGroup: 'NW_HW', isSupported: false },
+            { id: 'T_NW_SW_RESET', label: '再設定作業', sublabel: 'Wi-Fi・インターネット復旧', price: 10000, choiceGroup: 'NW_SW_RESET', isSupported: true },
+          ],
+          PR: [
+            { id: 'T_PR_HW_CHECK', label: '動作チェック', sublabel: 'プリンタ等診断', price: 6000, choiceGroup: 'PR_HW_CHECK', isSupported: true },
+            { id: 'T_PR_HW_BASE', label: 'ハードウェア修復', sublabel: '基本作業', price: 6000, choiceGroup: 'PR_HW_BASE', isSupported: true },
+            { id: 'T_PR_SW_CONNECT', label: 'デバイス接続', sublabel: 'PC・スマホとの接続', price: 6000, choiceGroup: 'PR_SW_CONNECT', isSupported: true },
+            { id: 'T_PR_SW_DRIVER', label: 'ドライバ再インストール', sublabel: 'ドライバ修復', price: 6000, choiceGroup: 'PR_SW_DRIVER', isSupported: true },
+          ],
+          DATA: [
+            { id: 'T_DATA_INSPECT', label: '取り出し検査（必須）', sublabel: '状態確認・見積', price: 3000, choiceGroup: 'DATA_INSPECTION', isSupported: true, isRequired: true },
+            { id: 'T_DATA_REC_0_50', label: 'データ復旧 0〜50GB', sublabel: 'PCお預かり', price: 25000, choiceGroup: 'DATA_REC_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+            { id: 'T_DATA_REC_50_100', label: 'データ復旧 50〜100GB', sublabel: 'PCお預かり', price: 45000, choiceGroup: 'DATA_REC_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+            { id: 'T_DATA_REC_100_200', label: 'データ復旧 100〜200GB', sublabel: 'PCお預かり', price: 65000, choiceGroup: 'DATA_REC_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+          ],
+          OTHER: [],
+        },
+
+        // ========== NotTrouble（通常作業） ==========
+        notTrouble: {
+          PC: [
+            { id: 'N_PC_SETUP', label: '初期設定', sublabel: '新規セットアップ', price: 6000, choiceGroup: 'PC_SETUP', isSupported: true },
+            { id: 'N_PC_RECOVER', label: 'リカバリ（初期化）', sublabel: 'OS再インストール', price: 6000, choiceGroup: 'PC_SETUP_AFTER_RECOVERY', isSupported: true },
+            { id: 'N_PC_INSTALL_1', label: 'ソフトインストール（1件）', sublabel: 'アプリ導入', price: 6000, choiceGroup: 'PC_INSTALL_COUNT', isSupported: true },
+            { id: 'N_PC_INSTALL_2', label: 'ソフトインストール（2件）', sublabel: 'アプリ導入', price: 6000, choiceGroup: 'PC_INSTALL_COUNT', isSupported: true },
+            { id: 'N_PC_INSTALL_3', label: 'ソフトインストール（3件）', sublabel: 'アプリ導入', price: 6000, choiceGroup: 'PC_INSTALL_COUNT', isSupported: true },
+            { id: 'N_PC_SSD_SW', label: 'SSD換装', sublabel: 'パーツ交換', price: 15000, choiceGroup: 'PC_SSD', isSupported: true, note: 'SSD費用は別途' },
+          ],
+          SP: [
+            { id: 'N_SP_SELECT', label: '商品選定', sublabel: '機種選びサポート', price: 6000, choiceGroup: 'SELECT_PROD', isSupported: true, note: '扱いない場合' },
+            { id: 'N_SP_SETUP', label: '初期設定', sublabel: '新規セットアップ', price: 10000, choiceGroup: 'SP_SETUP', isSupported: true },
+            { id: 'N_SP_APP_1', label: 'アプリインストール（1件）', sublabel: 'アプリ導入', price: 4000, choiceGroup: 'SP_APP_NT_COUNT', isSupported: true },
+            { id: 'N_SP_APP_2', label: 'アプリインストール（2件）', sublabel: 'アプリ導入', price: 7000, choiceGroup: 'SP_APP_NT_COUNT', isSupported: true },
+            { id: 'N_SP_APP_3', label: 'アプリインストール（3件）', sublabel: 'アプリ導入', price: 7000, choiceGroup: 'SP_APP_NT_COUNT', isSupported: true },
+          ],
+          NW: [
+            { id: 'N_NW_SELECT', label: '商品選定', sublabel: 'ルーター選びサポート', price: 6000, choiceGroup: 'SELECT_PROD', isSupported: true, note: '扱いない場合' },
+            { id: 'N_NW_EXPAND', label: 'ネットワーク拡張', sublabel: '中継器・メッシュ等', price: 10000, choiceGroup: 'NW_HW_EXPAND', isSupported: true },
+            { id: 'N_NW_WIFI', label: '無線化', sublabel: 'Wi-Fi導入', price: 10000, choiceGroup: 'NW_SW_WIFI', isSupported: true },
+            { id: 'N_NW_SETUP', label: '初期設定', sublabel: 'ルーター設定', price: 10000, choiceGroup: 'NW_SW_SETUP', isSupported: true },
+            { id: 'N_NW_SEGMENT', label: 'セグメント切り', sublabel: 'ネットワーク分離', price: 10000, choiceGroup: 'NW_SW_SEGMENT', isSupported: true },
+            { id: 'N_NW_FW_UPDATE', label: 'ファームウェア更新', sublabel: 'アップデート作業', price: 10000, choiceGroup: 'NW_SW_FW', isSupported: true },
+          ],
+          PR: [
+            { id: 'N_PR_SELECT', label: '商品選定', sublabel: 'プリンタ選びサポート', price: 6000, choiceGroup: 'SELECT_PROD', isSupported: true, note: '扱いない場合' },
+            { id: 'N_PR_DRIVER', label: 'ドライバインストール', sublabel: 'ドライバ導入', price: 8000, choiceGroup: 'PR_DRIVER_INSTALL', isSupported: true },
+          ],
+          DATA: [],
+          OTHER: [
+            { id: 'N_SELECT_PRODUCT', label: '商品選定（その他）', sublabel: '機器選びサポート', price: 6000, choiceGroup: 'SELECT_PROD', isSupported: true, note: '扱いない場合' },
+            { id: 'N_TRAIN_60', label: '操作指導（60分）', sublabel: '使い方レクチャー', price: 6000, choiceGroup: 'TRAIN_TIME', isSupported: true },
+            { id: 'N_TRAIN_120', label: '操作指導（120分以上）', sublabel: '使い方レクチャー', price: 10000, choiceGroup: 'TRAIN_TIME', isSupported: true },
+          ],
+        },
+
+        // ========== Option（オプション） ==========
+        options: [
+          { id: 'O_BACKUP_0_50', label: 'バックアップ 0〜50GB', sublabel: 'データ保存', price: 10000, choiceGroup: 'BACKUP_GB', isSupported: true },
+          { id: 'O_BACKUP_50_100', label: 'バックアップ 50〜100GB', sublabel: 'データ保存', price: 15000, choiceGroup: 'BACKUP_GB', isSupported: true },
+          { id: 'O_BACKUP_100_200', label: 'バックアップ 100〜200GB', sublabel: 'データ保存', price: 20000, choiceGroup: 'BACKUP_GB', isSupported: true },
+          { id: 'O_EXTRACT_INSPECT', label: 'データ取り出し検査', sublabel: '状態確認', price: 3000, choiceGroup: 'EXTRACT_INSPECTION', isSupported: true },
+          { id: 'O_EXTRACT_0_50', label: 'データ取り出し 0〜50GB', sublabel: 'PCお預かり', price: 25000, choiceGroup: 'EXTRACT_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+          { id: 'O_EXTRACT_50_100', label: 'データ取り出し 50〜100GB', sublabel: 'PCお預かり', price: 45000, choiceGroup: 'EXTRACT_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+          { id: 'O_EXTRACT_100_200', label: 'データ取り出し 100〜200GB', sublabel: 'PCお預かり', price: 65000, choiceGroup: 'EXTRACT_GB', isSupported: true, note: '+検査3,000円', requiresRevisit: true },
+        ],
+      },
+    };
+
+    // ============================================
+    // アニメーション付き金額表示コンポーネント
+    // ============================================
+    const AnimatedPrice = ({ value, className = '' }) => {
+      const [displayValue, setDisplayValue] = useState(value);
+      const prevValue = useRef(value);
+
+      useEffect(() => {
+        if (prevValue.current === value) return;
+
+        const start = prevValue.current;
+        const end = value;
+        const duration = 400;
+        const startTime = Date.now();
+
+        const animate = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const easeOut = 1 - Math.pow(1 - progress, 3);
+          const current = Math.round(start + (end - start) * easeOut);
+          setDisplayValue(current);
+
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          }
+        };
+
+        requestAnimationFrame(animate);
+        prevValue.current = value;
+      }, [value]);
+
+      return (
+        <span className={className}>
+          ¥{displayValue.toLocaleString()}
+        </span>
+      );
+    };
+
+    // ============================================
+    // 選択カードコンポーネント
+    // ============================================
+    const SelectionCard = ({ item, isSelected, onSelect, disabled = false, showPrice = true }) => {
+      if (disabled || !item.isSupported) {
+        return (
+          <div className="w-full text-left p-4 rounded-2xl border-2 border-gray-200 bg-gray-100 opacity-60 cursor-not-allowed">
+            <div className="flex justify-between items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-lg font-semibold text-gray-400">
+                  {item.icon && <span className="mr-2">{item.icon}</span>}
+                  {item.label}
+                </div>
+                {item.sublabel && (
+                  <div className="text-sm mt-1 text-gray-400">{item.sublabel}</div>
+                )}
+                <div className="text-xs mt-1 text-red-400 font-medium">※対応不可</div>
+              </div>
+              <div className="text-right flex-shrink-0 text-gray-400">
+                <div className="text-lg font-bold">－</div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <button
+          onClick={() => onSelect(item)}
+          className={`w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 active:scale-98 ${
+            isSelected
+              ? 'border-indigo-600 bg-indigo-50 shadow-md'
+              : 'border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm'
+          }`}
+          style={{ minHeight: '72px' }}
+        >
+          <div className="flex justify-between items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <div className={`text-lg font-semibold ${isSelected ? 'text-indigo-900' : 'text-gray-800'}`}>
+                {item.icon && <span className="mr-2">{item.icon}</span>}
+                {item.label}
+              </div>
+              {item.sublabel && (
+                <div className={`text-sm mt-1 ${isSelected ? 'text-indigo-600' : 'text-gray-500'}`}>
+                  {item.sublabel}
+                </div>
+              )}
+              {item.note && (
+                <div className="text-xs mt-1 text-amber-600 font-medium">※{item.note}</div>
+              )}
+              {item.requiresRevisit && (
+                <div className="text-xs mt-1 text-blue-600 font-medium">🔄 再訪問費が加算されます</div>
+              )}
+            </div>
+            {showPrice && (
+              <div className={`text-right flex-shrink-0 ${isSelected ? 'text-indigo-700' : 'text-gray-700'}`}>
+                <div className="text-lg font-bold">
+                  {item.price === 0 ? '¥0' : `¥${item.price.toLocaleString()}`}
+                </div>
+              </div>
+            )}
+          </div>
+        </button>
+      );
+    };
+
+    // ============================================
+    // デバイス選択カード
+    // ============================================
+    const DeviceCard = ({ device, isSelected, onToggle, hasItems }) => {
+      return (
+        <button
+          onClick={() => onToggle(device.id)}
+          disabled={!hasItems}
+          className={`p-5 rounded-2xl border-2 transition-all duration-200 active:scale-95 ${
+            !hasItems
+              ? 'border-gray-200 bg-gray-100 opacity-50 cursor-not-allowed'
+              : isSelected
+              ? 'border-indigo-600 bg-indigo-50 shadow-md'
+              : 'border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm'
+          }`}
+        >
+          <div className="text-3xl mb-2">{device.icon}</div>
+          <div className={`font-semibold text-sm ${
+            !hasItems ? 'text-gray-400' : isSelected ? 'text-indigo-900' : 'text-gray-800'
+          }`}>
+            {device.label}
+          </div>
+          {isSelected && (
+            <div className="mt-2">
+              <svg className="w-5 h-5 text-indigo-600 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            </div>
+          )}
+        </button>
+      );
+    };
+
+    // ============================================
+    // ステップインジケーター
+    // ============================================
+    const StepIndicator = ({ currentStep, totalSteps }) => {
+      return (
+        <div className="flex justify-center gap-2 py-4">
+          {Array.from({ length: totalSteps }, (_, i) => (
+            <div
+              key={i}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                i + 1 === currentStep
+                  ? 'w-8 bg-indigo-600'
+                  : i + 1 < currentStep
+                  ? 'w-2 bg-indigo-400'
+                  : 'w-2 bg-gray-300'
+              }`}
+            />
+          ))}
+        </div>
+      );
+    };
+
+    // ============================================
+    // メインアプリケーション
+    // ============================================
+    function App() {
+      const [step, setStep] = useState(1);
+      const [selectedTravelBand, setSelectedTravelBand] = useState(null);
+      const [isTrouble, setIsTrouble] = useState(null);
+      const [selectedDevices, setSelectedDevices] = useState([]);
+      const [selectedWorks, setSelectedWorks] = useState({});
+      const [selectedOptions, setSelectedOptions] = useState({});
+      const [copySuccess, setCopySuccess] = useState(false);
+
+      const totalSteps = 6;
+
+      // 再訪問が必要かどうかを判定
+      const needsRevisit = () => {
+        const allSelected = { ...selectedWorks, ...selectedOptions };
+        return Object.values(allSelected).some(item => item?.requiresRevisit);
+      };
+
+      // 合計金額の計算
+      const calculateTotal = () => {
+        let total = 0;
+        let breakdown = {
+          travel: 0,
+          revisit: 0,
+          works: [],
+          options: [],
+        };
+
+        if (selectedTravelBand) {
+          breakdown.travel = selectedTravelBand.price;
+          total += selectedTravelBand.price;
+        }
+
+        if (needsRevisit() && selectedTravelBand) {
+          breakdown.revisit = selectedTravelBand.revisit;
+          total += selectedTravelBand.revisit;
+        }
+
+        Object.values(selectedWorks).forEach(item => {
+          if (item) {
+            breakdown.works.push(item);
+            total += item.price;
+          }
+        });
+
+        Object.values(selectedOptions).forEach(item => {
+          if (item) {
+            breakdown.options.push(item);
+            total += item.price;
+          }
+        });
+
+        return { total, breakdown };
+      };
+
+      const { total, breakdown } = calculateTotal();
+
+      // デバイス選択のトグル
+      const toggleDevice = (deviceId) => {
+        setSelectedDevices(prev => {
+          const isCurrentlySelected = prev.includes(deviceId);
+          if (isCurrentlySelected) {
+            const newWorks = { ...selectedWorks };
+            Object.keys(newWorks).forEach(key => {
+              if (deviceId === 'DATA' && key.startsWith('T_DATA')) {
+                delete newWorks[key];
+              }
+            });
+            setSelectedWorks(newWorks);
+            return prev.filter(id => id !== deviceId);
+          } else {
+            if (deviceId === 'DATA') {
+              const inspectItem = PRICE_DATA.menu.trouble.DATA.find(item => item.id === 'T_DATA_INSPECT');
+              if (inspectItem) {
+                setSelectedWorks(prevWorks => ({
+                  ...prevWorks,
+                  [inspectItem.id]: inspectItem
+                }));
+              }
+            }
+            return [...prev, deviceId];
+          }
+        });
+      };
+
+      // 作業選択
+      const selectWork = (item) => {
+        if (item.id === 'T_DATA_INSPECT' && selectedWorks[item.id]) {
+          return;
+        }
+        
+        setSelectedWorks(prev => {
+          const newWorks = { ...prev };
+          Object.keys(newWorks).forEach(key => {
+            if (newWorks[key]?.choiceGroup === item.choiceGroup) {
+              delete newWorks[key];
+            }
+          });
+          if (prev[item.id] && item.id !== 'T_DATA_INSPECT') {
+            delete newWorks[item.id];
+          } else {
+            newWorks[item.id] = item;
+          }
+          return newWorks;
+        });
+      };
+
+      // オプション選択
+      const selectOption = (item) => {
+        setSelectedOptions(prev => {
+          const newOptions = { ...prev };
+          Object.keys(newOptions).forEach(key => {
+            if (newOptions[key]?.choiceGroup === item.choiceGroup) {
+              delete newOptions[key];
+            }
+          });
+          if (prev[item.id]) {
+            delete newOptions[item.id];
+          } else {
+            newOptions[item.id] = item;
+          }
+          return newOptions;
+        });
+      };
+
+      const getCurrentMenu = () => {
+        return isTrouble ? PRICE_DATA.menu.trouble : PRICE_DATA.menu.notTrouble;
+      };
+
+      const nextStep = () => {
+        if (step < totalSteps) setStep(step + 1);
+      };
+
+      const prevStep = () => {
+        if (step > 1) setStep(step - 1);
+      };
+
+      const reset = () => {
+        setStep(1);
+        setSelectedTravelBand(null);
+        setIsTrouble(null);
+        setSelectedDevices([]);
+        setSelectedWorks({});
+        setSelectedOptions({});
+        setCopySuccess(false);
+      };
+
+      // テキストでコピー
+      const copyToClipboard = () => {
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
+
+        let text = `━━━━━━━━━━━━━━━━━━━━
+　お見積書
+　くらしと仕事のITパートナー
+━━━━━━━━━━━━━━━━━━━━
+作成日: ${dateStr}
+
+【内訳】
+`;
+        if (selectedTravelBand) {
+          text += `■ 出張費（${selectedTravelBand.label}）\n`;
+          text += `　 ¥${selectedTravelBand.price.toLocaleString()}\n`;
+        }
+
+        if (needsRevisit() && selectedTravelBand) {
+          text += `■ 再訪問費（${selectedTravelBand.label}）\n`;
+          text += `　 ¥${selectedTravelBand.revisit.toLocaleString()}\n`;
+        }
+
+        if (breakdown.works.length > 0) {
+          text += `■ 作業内容:\n`;
+          breakdown.works.forEach(item => {
+            text += `　・${item.label}: ¥${item.price.toLocaleString()}`;
+            if (item.note) text += ` (${item.note})`;
+            text += '\n';
+          });
+        }
+
+        if (breakdown.options.length > 0) {
+          text += `■ オプション:\n`;
+          breakdown.options.forEach(item => {
+            text += `　・${item.label}: ¥${item.price.toLocaleString()}`;
+            if (item.note) text += ` (${item.note})`;
+            text += '\n';
+          });
+        }
+
+        text += `
+━━━━━━━━━━━━━━━━━━━━
+　合計金額: ¥${total.toLocaleString()}（税込）
+━━━━━━━━━━━━━━━━━━━━
+
+※ 部品代・特殊作業は別途ご相談
+※ 作業完了後のお支払いとなります
+`;
+
+        navigator.clipboard.writeText(text).then(() => {
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2500);
+        }).catch(() => {
+          // フォールバック：テキストエリアを使用
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2500);
+        });
+      };
+
+      const canProceed = () => {
+        switch (step) {
+          case 1: return selectedTravelBand !== null;
+          case 2: return isTrouble !== null;
+          case 3: return selectedDevices.length > 0;
+          case 4: return Object.keys(selectedWorks).length > 0;
+          case 5: return true;
+          default: return true;
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
+          {/* ヘッダー */}
+          <header className="bg-gradient-to-r from-indigo-900 to-indigo-800 text-white px-4 py-5 shadow-lg sticky top-0 z-50">
+            <div className="max-w-lg mx-auto">
+              <h1 className="text-lg font-bold tracking-wide text-center">
+                くらしと仕事のITパートナー
+              </h1>
+              <p className="text-indigo-200 text-sm text-center mt-1">お見積りシミュレーター</p>
+            </div>
+          </header>
+
+          {/* 合計金額バー */}
+          <div className="bg-white border-b border-gray-200 px-4 py-4 shadow-sm sticky top-[76px] z-40">
+            <div className="max-w-lg mx-auto flex justify-between items-center">
+              <div>
+                <span className="text-gray-600 font-medium">合計金額</span>
+                {needsRevisit() && (
+                  <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                    再訪問費込
+                  </span>
+                )}
+              </div>
+              <AnimatedPrice
+                value={total}
+                className="text-3xl font-bold text-indigo-900"
+              />
+            </div>
+          </div>
+
+          {/* ステップインジケーター */}
+          <div className="max-w-lg mx-auto">
+            <StepIndicator currentStep={step} totalSteps={totalSteps} />
+          </div>
+
+          {/* メインコンテンツ */}
+          <main className="max-w-lg mx-auto px-4 pb-32">
+            {/* Step 1: 出張エリア */}
+            {step === 1 && (
+              <div className="space-y-4">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold text-gray-900">出張エリア</h2>
+                  <p className="text-gray-500 text-sm mt-1">ご訪問先をお選びください</p>
+                </div>
+                <div className="space-y-3">
+                  {PRICE_DATA.travel.bands.map(band => (
+                    <SelectionCard
+                      key={band.id}
+                      item={{
+                        ...band,
+                        isSupported: true,
+                      }}
+                      isSelected={selectedTravelBand?.id === band.id}
+                      onSelect={() => setSelectedTravelBand(band)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: トラブル or 通常作業 */}
+            {step === 2 && (
+              <div className="space-y-4">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold text-gray-900">ご依頼内容</h2>
+                  <p className="text-gray-500 text-sm mt-1">どちらに該当しますか？</p>
+                </div>
+                <div className="space-y-3">
+                  <SelectionCard
+                    item={{
+                      id: 'trouble',
+                      label: 'トラブル対応',
+                      sublabel: '動かない・おかしい等の問題解決',
+                      icon: '🔧',
+                      price: null,
+                      isSupported: true,
+                    }}
+                    isSelected={isTrouble === true}
+                    onSelect={() => {
+                      setIsTrouble(true);
+                      setSelectedDevices([]);
+                      setSelectedWorks({});
+                    }}
+                    showPrice={false}
+                  />
+                  <SelectionCard
+                    item={{
+                      id: 'notTrouble',
+                      label: '設定・導入・相談',
+                      sublabel: '新規セットアップ・使い方など',
+                      icon: '✨',
+                      price: null,
+                      isSupported: true,
+                    }}
+                    isSelected={isTrouble === false}
+                    onSelect={() => {
+                      setIsTrouble(false);
+                      setSelectedDevices([]);
+                      setSelectedWorks({});
+                    }}
+                    showPrice={false}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: デバイス選択 */}
+            {step === 3 && (
+              <div className="space-y-4">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold text-gray-900">対象機器</h2>
+                  <p className="text-gray-500 text-sm mt-1">該当するものをすべてお選びください（複数可）</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {PRICE_DATA.devices.map(device => {
+                    const menu = getCurrentMenu();
+                    const hasItems = menu[device.id] && menu[device.id].length > 0;
+                    return (
+                      <DeviceCard
+                        key={device.id}
+                        device={device}
+                        isSelected={selectedDevices.includes(device.id)}
+                        onToggle={toggleDevice}
+                        hasItems={hasItems}
+                      />
+                    );
+                  })}
+                </div>
+                {selectedDevices.length > 0 && (
+                  <div className="mt-4 p-3 bg-indigo-50 rounded-xl">
+                    <p className="text-sm text-indigo-700">
+                      <span className="font-semibold">{selectedDevices.length}件</span>選択中
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 4: 作業内容選択 */}
+            {step === 4 && (
+              <div className="space-y-6">
+                <div className="mb-4">
+                  <h2 className="text-xl font-bold text-gray-900">作業内容</h2>
+                  <p className="text-gray-500 text-sm mt-1">各機器の作業をお選びください</p>
+                </div>
+                {selectedDevices.map(deviceId => {
+                  const device = PRICE_DATA.devices.find(d => d.id === deviceId);
+                  const menu = getCurrentMenu();
+                  const items = menu[deviceId] || [];
+
+                  if (items.length === 0) return null;
+
+                  const groups = {};
+                  items.forEach(item => {
+                    if (!groups[item.choiceGroup]) {
+                      groups[item.choiceGroup] = [];
+                    }
+                    groups[item.choiceGroup].push(item);
+                  });
+
+                  return (
+                    <div key={deviceId} className="space-y-3">
+                      <div className="flex items-center gap-2 pb-2 border-b border-gray-200">
+                        <span className="text-2xl">{device.icon}</span>
+                        <h3 className="text-lg font-bold text-gray-800">{device.label}</h3>
+                      </div>
+                      {Object.entries(groups).map(([groupId, groupItems]) => (
+                        <div key={groupId} className="space-y-2">
+                          {groupItems.map(item => (
+                            <SelectionCard
+                              key={item.id}
+                              item={item}
+                              isSelected={!!selectedWorks[item.id]}
+                              onSelect={selectWork}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Step 5: オプション */}
+            {step === 5 && (
+              <div className="space-y-4">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold text-gray-900">オプション</h2>
+                  <p className="text-gray-500 text-sm mt-1">追加作業があればお選びください（任意）</p>
+                </div>
+                <div className="space-y-3">
+                  {PRICE_DATA.menu.options
+                    .filter(item => {
+                      if (selectedDevices.includes('DATA')) {
+                        const dataRelatedGroups = ['BACKUP_GB', 'EXTRACT_GB', 'EXTRACT_INSPECTION'];
+                        if (dataRelatedGroups.includes(item.choiceGroup)) {
+                          return false;
+                        }
+                      }
+                      return true;
+                    })
+                    .map(item => (
+                    <SelectionCard
+                      key={item.id}
+                      item={item}
+                      isSelected={!!selectedOptions[item.id]}
+                      onSelect={selectOption}
+                    />
+                  ))}
+                  {selectedDevices.includes('DATA') && (
+                    <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                      <p className="text-sm text-blue-700">
+                        💡 データ復旧関連のオプションは、作業内容で選択済みのため表示されていません。
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Step 6: 確認画面 */}
+            {step === 6 && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-2xl border-2 border-indigo-100 p-5 shadow-sm">
+                  <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    お見積り内容
+                  </h3>
+                  <div className="space-y-3 text-sm">
+                    {selectedTravelBand && (
+                      <div className="flex justify-between py-2 border-b border-gray-100">
+                        <span className="text-gray-600">出張費</span>
+                        <div className="text-right">
+                          <div className="font-medium text-gray-900">{selectedTravelBand.label}</div>
+                          <div className="text-indigo-600">¥{selectedTravelBand.price.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {needsRevisit() && selectedTravelBand && (
+                      <div className="flex justify-between py-2 border-b border-gray-100 bg-blue-50 -mx-2 px-2 rounded">
+                        <span className="text-blue-700">🔄 再訪問費</span>
+                        <div className="text-right">
+                          <div className="font-medium text-blue-900">{selectedTravelBand.label}</div>
+                          <div className="text-blue-600">¥{selectedTravelBand.revisit.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {breakdown.works.length > 0 && (
+                      <div className="py-2 border-b border-gray-100">
+                        <span className="text-gray-600 font-medium">作業内容</span>
+                        <div className="mt-2 space-y-2">
+                          {breakdown.works.map(item => (
+                            <div key={item.id} className="flex justify-between text-sm">
+                              <div>
+                                <span className="text-gray-700">{item.label}</span>
+                                {item.note && (
+                                  <span className="text-amber-600 text-xs ml-1">({item.note})</span>
+                                )}
+                              </div>
+                              <span className="text-indigo-600 font-medium">¥{item.price.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {breakdown.options.length > 0 && (
+                      <div className="py-2 border-b border-gray-100">
+                        <span className="text-gray-600 font-medium">オプション</span>
+                        <div className="mt-2 space-y-2">
+                          {breakdown.options.map(item => (
+                            <div key={item.id} className="flex justify-between text-sm">
+                              <div>
+                                <span className="text-gray-700">{item.label}</span>
+                                {item.note && (
+                                  <span className="text-amber-600 text-xs ml-1">({item.note})</span>
+                                )}
+                              </div>
+                              <span className="text-indigo-600 font-medium">¥{item.price.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t-2 border-indigo-200">
+                    <div className="flex justify-between items-center">
+                      <span className="text-lg font-bold text-gray-900">合計金額</span>
+                      <span className="text-2xl font-bold text-indigo-900">
+                        ¥{total.toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 text-right">税込</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={copyToClipboard}
+                  className={`w-full py-4 rounded-2xl font-bold text-lg transition-all duration-200 flex items-center justify-center gap-2 ${
+                    copySuccess
+                      ? 'bg-green-500 text-white'
+                      : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 active:scale-98'
+                  }`}
+                >
+                  {copySuccess ? (
+                    <>
+                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      コピーしました！
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                      </svg>
+                      見積もりをテキストでコピー
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </main>
+
+          {/* フッターナビゲーション */}
+          <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4 shadow-lg">
+            <div className="max-w-lg mx-auto flex gap-3">
+              {step > 1 && (
+                <button
+                  onClick={prevStep}
+                  className="flex-1 py-4 rounded-2xl border-2 border-gray-300 text-gray-700 font-bold text-lg hover:bg-gray-50 active:scale-98 transition-all"
+                >
+                  戻る
+                </button>
+              )}
+              {step < totalSteps ? (
+                <button
+                  onClick={nextStep}
+                  disabled={!canProceed()}
+                  className={`flex-1 py-4 rounded-2xl font-bold text-lg transition-all ${
+                    canProceed()
+                      ? 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-98 shadow-md'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  次へ
+                </button>
+              ) : (
+                <button
+                  onClick={reset}
+                  className="flex-1 py-4 rounded-2xl bg-gray-800 text-white font-bold text-lg hover:bg-gray-900 active:scale-98 transition-all shadow-md"
+                >
+                  最初からやり直す
+                </button>
+              )}
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    // アプリケーションをレンダリング
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
